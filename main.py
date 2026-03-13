@@ -27,8 +27,9 @@ app = FastAPI(title="DataCrack API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "https://datacrack.mx", "https://www.datacrack.mx",
-                   "https://melodic-marzipan-eee891.netlify.app"],
+    allow_origins=[FRONTEND_URL, "https://datacrack.mx", "http://datacrack.mx",
+               "https://www.datacrack.mx", "http://www.datacrack.mx",
+               "https://melodic-marzipan-eee891.netlify.app"],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
