@@ -1,26 +1,27 @@
 """ main.py — DataCrack Backend API
-FastAPI + scraper Google News RSS + Claude
+FastAPI + scraper Google News RSS + Claude + PostgreSQL
 Deploy: Railway
 """
-import os, json, hashlib, time, asyncio, httpx
+import os, json, hashlib, time, asyncio
 from datetime import datetime, timezone
 from urllib.parse import quote
 from contextlib import asynccontextmanager
 
 import feedparser
 import anthropic
+import psycopg2
+import psycopg2.extras
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 # ── CONFIG ─────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+DATABASE_URL      = os.environ.get("DATABASE_URL", "")
 MAX_ARTICLES      = 8
 MAX_RETRIES       = 3
 RETRY_WAIT        = 5
 FRONTEND_URL      = os.environ.get("FRONTEND_URL", "*")
-CACHE_FILE        = "cache.json"
-ALERTAS_FILE      = "alertas.json"
 
 # ── CACHÉ EN MEMORIA ───────────────────────────────────────────
 cache = {
@@ -31,44 +32,104 @@ cache = {
     "error": None,
 }
 
-# ── PERSISTENCIA ───────────────────────────────────────────────
-def guardar_cache():
-    try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump({"data": cache["data"], "ultimo_update": cache["ultimo_update"]}, f, ensure_ascii=False)
-    except Exception:
-        pass
+# ── POSTGRESQL ─────────────────────────────────────────────────
+def get_conn():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
-def cargar_cache():
+def init_db():
     try:
-        if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE) as f:
-                saved = json.load(f)
-                cache["data"]          = saved.get("data")
-                cache["ultimo_update"] = saved.get("ultimo_update")
-    except Exception:
-        pass
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cache_noticias (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                data JSONB,
+                ultimo_update TIMESTAMP WITH TIME ZONE,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS alertas_historial (
+                id SERIAL PRIMARY KEY,
+                texto TEXT NOT NULL,
+                topic VARCHAR(50),
+                fecha TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error init_db: {e}")
 
-def cargar_alertas():
+def guardar_cache_db():
     try:
-        if os.path.exists(ALERTAS_FILE):
-            with open(ALERTAS_FILE) as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return []
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO cache_noticias (id, data, ultimo_update)
+            VALUES (1, %s, %s)
+            ON CONFLICT (id) DO UPDATE
+            SET data = EXCLUDED.data,
+                ultimo_update = EXCLUDED.ultimo_update,
+                updated_at = NOW()
+        """, (json.dumps(cache["data"], ensure_ascii=False), cache["ultimo_update"]))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error guardar_cache_db: {e}")
 
-def guardar_alerta(texto, topic):
-    alertas = cargar_alertas()
-    nueva = {"texto": texto, "topic": topic, "fecha": datetime.now(timezone.utc).isoformat()}
-    if not alertas or alertas[-1]["texto"] != texto:
-        alertas.append(nueva)
-        alertas = alertas[-50:]
-        try:
-            with open(ALERTAS_FILE, "w") as f:
-                json.dump(alertas, f, ensure_ascii=False)
-        except Exception:
-            pass
+def cargar_cache_db():
+    try:
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT data, ultimo_update FROM cache_noticias WHERE id = 1")
+        row = cur.fetchone()
+        if row:
+            cache["data"]          = row["data"]
+            cache["ultimo_update"] = row["ultimo_update"].isoformat() if row["ultimo_update"] else None
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error cargar_cache_db: {e}")
+
+def guardar_alerta_db(texto, topic):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT texto FROM alertas_historial
+            WHERE topic = %s
+            ORDER BY fecha DESC LIMIT 1
+        """, (topic,))
+        row = cur.fetchone()
+        if not row or row[0] != texto:
+            cur.execute("INSERT INTO alertas_historial (texto, topic) VALUES (%s, %s)", (texto, topic))
+            cur.execute("""
+                DELETE FROM alertas_historial
+                WHERE id NOT IN (
+                    SELECT id FROM alertas_historial ORDER BY fecha DESC LIMIT 50
+                )
+            """)
+            conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error guardar_alerta_db: {e}")
+
+def cargar_alertas_db():
+    try:
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT texto, topic, fecha FROM alertas_historial ORDER BY fecha DESC LIMIT 50")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [{"texto": r["texto"], "topic": r["topic"], "fecha": r["fecha"].isoformat()} for r in rows]
+    except Exception as e:
+        print(f"Error cargar_alertas_db: {e}")
+        return []
 
 # ── PERSONAS ────────────────────────────────────────────────────
 PERSONAS = [
@@ -205,7 +266,7 @@ def run_scrape_noticias():
                 result = claude_call(prompt.format(n=MAX_ARTICLES), json.dumps(slim, ensure_ascii=False), max_tokens=6000)
                 result["actualizado"] = datetime.now(timezone.utc).isoformat()
                 if result.get("alerta"):
-                    guardar_alerta(result["alerta"], topic)
+                    guardar_alerta_db(result["alerta"], topic)
                 data[topic] = result
             except Exception:
                 data[topic] = {
@@ -216,7 +277,7 @@ def run_scrape_noticias():
                 }
         cache["data"]          = data
         cache["ultimo_update"] = datetime.now(timezone.utc).isoformat()
-        guardar_cache()
+        guardar_cache_db()
     except Exception as e:
         cache["error"] = str(e)
     finally:
@@ -232,7 +293,7 @@ def run_scrape_personas():
         personas_data = asyncio.run(_scrape_personas())
         data["personas"] = personas_data
         cache["data"] = data
-        guardar_cache()
+        guardar_cache_db()
     except Exception as e:
         cache["error"] = str(e)
     finally:
@@ -271,13 +332,14 @@ scheduler = BackgroundScheduler()
 
 @asynccontextmanager
 async def lifespan(app):
-    cargar_cache()
+    init_db()
+    cargar_cache_db()
     scheduler.add_job(run_scrape, "interval", hours=6, id="scrape_periodico")
     scheduler.start()
     yield
     scheduler.shutdown()
 
-app = FastAPI(title="DataCrack API", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="DataCrack API", version="3.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_URL, "https://datacrack.mx", "http://datacrack.mx",
@@ -289,7 +351,7 @@ app.add_middleware(
 # ── ENDPOINTS ─────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "DataCrack API v2.1"}
+    return {"status": "ok", "service": "DataCrack API v3 — PostgreSQL"}
 
 @app.get("/noticias")
 def get_noticias():
@@ -305,7 +367,6 @@ def get_noticias():
 
 @app.get("/actualizar")
 def actualizar(background_tasks: BackgroundTasks):
-    """Solo actualiza noticias — rápido ~30 seg."""
     if cache["actualizando_noticias"]:
         return {"status": "en_progreso", "mensaje": "Ya hay una actualización de noticias en curso."}
     background_tasks.add_task(run_scrape_noticias)
@@ -313,7 +374,6 @@ def actualizar(background_tasks: BackgroundTasks):
 
 @app.get("/actualizar/personas")
 def actualizar_personas(background_tasks: BackgroundTasks):
-    """Solo actualiza personas — lento ~90 seg."""
     if cache["actualizando_personas"]:
         return {"status": "en_progreso", "mensaje": "Ya hay una actualización de personas en curso."}
     background_tasks.add_task(run_scrape_personas)
@@ -321,8 +381,8 @@ def actualizar_personas(background_tasks: BackgroundTasks):
 
 @app.get("/alertas")
 def get_alertas():
-    alertas = cargar_alertas()
-    return {"alertas": list(reversed(alertas)), "total": len(alertas)}
+    alertas = cargar_alertas_db()
+    return {"alertas": alertas, "total": len(alertas)}
 
 @app.get("/status")
 def get_status():
