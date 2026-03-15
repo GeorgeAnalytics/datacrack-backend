@@ -23,7 +23,13 @@ CACHE_FILE        = "cache.json"
 ALERTAS_FILE      = "alertas.json"
 
 # ── CACHÉ EN MEMORIA ───────────────────────────────────────────
-cache = {"data": None, "actualizando": False, "ultimo_update": None, "error": None}
+cache = {
+    "data": None,
+    "actualizando_noticias": False,
+    "actualizando_personas": False,
+    "ultimo_update": None,
+    "error": None,
+}
 
 # ── PERSISTENCIA ───────────────────────────────────────────────
 def guardar_cache():
@@ -38,7 +44,7 @@ def cargar_cache():
         if os.path.exists(CACHE_FILE):
             with open(CACHE_FILE) as f:
                 saved = json.load(f)
-                cache["data"]         = saved.get("data")
+                cache["data"]          = saved.get("data")
                 cache["ultimo_update"] = saved.get("ultimo_update")
     except Exception:
         pass
@@ -54,15 +60,9 @@ def cargar_alertas():
 
 def guardar_alerta(texto, topic):
     alertas = cargar_alertas()
-    nueva = {
-        "texto": texto,
-        "topic": topic,
-        "fecha": datetime.now(timezone.utc).isoformat()
-    }
-    # Evitar duplicados seguidos
+    nueva = {"texto": texto, "topic": topic, "fecha": datetime.now(timezone.utc).isoformat()}
     if not alertas or alertas[-1]["texto"] != texto:
         alertas.append(nueva)
-        # Guardar solo las últimas 50 alertas
         alertas = alertas[-50:]
         try:
             with open(ALERTAS_FILE, "w") as f:
@@ -118,34 +118,6 @@ Responde SOLO con JSON sin backticks:
 {{"ultima_noticia":"string max 150 chars","tono":"pos|neg|neu","actividad":"alta|media|baja|sin_presencia","temas":["string"],"apariciones":0,"resumen":"string max 200 chars"}}
 Actividad: alta=3+ noticias, media=1-2, baja=menciones indirectas, sin_presencia=no aparece.
 Tono: pos=cobertura favorable, neg=cobertura negativa, neu=informativa neutral."""
-
-# ── MINIATURA (og:image) ─────────────────────────────────────────
-async def fetch_thumbnail(url: str) -> str:
-    try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-            # Primer request para seguir el redirect de Google News
-            r = await client.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            })
-            # Usar la URL final después del redirect
-            final_url = str(r.url)
-            if "google.com" in final_url:
-                return ""
-            html = r.text
-            for tag in ['og:image', 'twitter:image']:
-                for attr in [f'property="{tag}"', f"property='{tag}'", f'name="{tag}"']:
-                    idx = html.find(attr)
-                    if idx != -1:
-                        content_idx = html.find('content="', idx)
-                        if content_idx != -1:
-                            start = content_idx + 9
-                            end = html.find('"', start)
-                            img = html[start:end]
-                            if img.startswith('http'):
-                                return img
-    except Exception:
-        pass
-    return ""
 
 # ── FEEDS RSS ────────────────────────────────────────────────────
 def fetch_feed(topic):
@@ -213,17 +185,15 @@ def claude_call(system, content, max_tokens=2500):
             else:
                 raise
 
-# ── SCRAPE COMPLETO ───────────────────────────────────────────────
-def run_scrape():
+# ── SCRAPE NOTICIAS (rápido ~30 seg) ─────────────────────────────
+def run_scrape_noticias():
     if not ANTHROPIC_API_KEY:
         cache["error"] = "ANTHROPIC_API_KEY no configurada"
-        cache["actualizando"] = False
         return
-    cache["actualizando"] = True
+    cache["actualizando_noticias"] = True
     cache["error"] = None
-    data = {}
+    data = cache["data"] or {}
     try:
-        # Vallarta y Morena
         for topic in ["vallarta", "morena"]:
             articles = fetch_feed(topic)
             if not articles:
@@ -234,39 +204,44 @@ def run_scrape():
             try:
                 result = claude_call(prompt.format(n=MAX_ARTICLES), json.dumps(slim, ensure_ascii=False), max_tokens=6000)
                 result["actualizado"] = datetime.now(timezone.utc).isoformat()
-                # Guardar alerta en historial si existe
                 if result.get("alerta"):
                     guardar_alerta(result["alerta"], topic)
-                # Agregar miniaturas en paralelo
-                urls = [n.get("url", "") for n in result.get("noticias", [])]
-                thumbs = asyncio.run(_fetch_thumbnails(urls))
-                for i, noticia in enumerate(result.get("noticias", [])):
-                    noticia["imagen"] = thumbs[i]
                 data[topic] = result
             except Exception:
                 data[topic] = {
-                    "noticias": [{**a, "resumen": a["titulo"], "sentimiento": "neu", "impacto": 50, "tema": "otro", "entidades": [], "tags": [], "imagen": ""} for a in articles],
+                    "noticias": [{**a, "resumen": a["titulo"], "sentimiento": "neu", "impacto": 50, "tema": "otro", "entidades": [], "tags": []} for a in articles],
                     "actualizado": datetime.now(timezone.utc).isoformat(),
                     "resumen_general": None,
                     "alerta": None,
                 }
-
-        # Personas en paralelo
-        personas_data = asyncio.run(_scrape_personas())
-        data["personas"] = personas_data
-
-        cache["data"]         = data
+        cache["data"]          = data
         cache["ultimo_update"] = datetime.now(timezone.utc).isoformat()
         guardar_cache()
-
     except Exception as e:
         cache["error"] = str(e)
     finally:
-        cache["actualizando"] = False
+        cache["actualizando_noticias"] = False
 
-async def _fetch_thumbnails(urls):
-    tasks = [fetch_thumbnail(u) for u in urls]
-    return await asyncio.gather(*tasks)
+# ── SCRAPE PERSONAS (lento ~90 seg) ──────────────────────────────
+def run_scrape_personas():
+    if not ANTHROPIC_API_KEY:
+        return
+    cache["actualizando_personas"] = True
+    data = cache["data"] or {}
+    try:
+        personas_data = asyncio.run(_scrape_personas())
+        data["personas"] = personas_data
+        cache["data"] = data
+        guardar_cache()
+    except Exception as e:
+        cache["error"] = str(e)
+    finally:
+        cache["actualizando_personas"] = False
+
+# ── SCRAPE COMPLETO (cron cada 6 hrs) ────────────────────────────
+def run_scrape():
+    run_scrape_noticias()
+    run_scrape_personas()
 
 async def _scrape_personas():
     loop = asyncio.get_event_loop()
@@ -302,7 +277,7 @@ async def lifespan(app):
     yield
     scheduler.shutdown()
 
-app = FastAPI(title="DataCrack API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="DataCrack API", version="2.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_URL, "https://datacrack.mx", "http://datacrack.mx",
@@ -314,21 +289,35 @@ app.add_middleware(
 # ── ENDPOINTS ─────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "DataCrack API v2"}
+    return {"status": "ok", "service": "DataCrack API v2.1"}
 
 @app.get("/noticias")
 def get_noticias():
     if cache["data"] is None:
-        return {"status": "sin_datos", "actualizando": cache["actualizando"],
+        return {"status": "sin_datos",
+                "actualizando": cache["actualizando_noticias"],
                 "mensaje": "No hay datos aún. Usa /actualizar para cargar por primera vez."}
-    return {**cache["data"], "meta": {"actualizando": cache["actualizando"], "ultimo_update": cache["ultimo_update"]}}
+    return {**cache["data"], "meta": {
+        "actualizando_noticias": cache["actualizando_noticias"],
+        "actualizando_personas": cache["actualizando_personas"],
+        "ultimo_update": cache["ultimo_update"],
+    }}
 
 @app.get("/actualizar")
 def actualizar(background_tasks: BackgroundTasks):
-    if cache["actualizando"]:
-        return {"status": "en_progreso", "mensaje": "Ya hay una actualización en curso."}
-    background_tasks.add_task(run_scrape)
-    return {"status": "iniciado", "mensaje": "Actualización iniciada. Tarda 2-3 minutos."}
+    """Solo actualiza noticias — rápido ~30 seg."""
+    if cache["actualizando_noticias"]:
+        return {"status": "en_progreso", "mensaje": "Ya hay una actualización de noticias en curso."}
+    background_tasks.add_task(run_scrape_noticias)
+    return {"status": "iniciado", "mensaje": "Actualizando noticias. Tarda ~30 segundos."}
+
+@app.get("/actualizar/personas")
+def actualizar_personas(background_tasks: BackgroundTasks):
+    """Solo actualiza personas — lento ~90 seg."""
+    if cache["actualizando_personas"]:
+        return {"status": "en_progreso", "mensaje": "Ya hay una actualización de personas en curso."}
+    background_tasks.add_task(run_scrape_personas)
+    return {"status": "iniciado", "mensaje": "Actualizando personas. Tarda ~90 segundos."}
 
 @app.get("/alertas")
 def get_alertas():
@@ -337,5 +326,11 @@ def get_alertas():
 
 @app.get("/status")
 def get_status():
-    return {"actualizando": cache["actualizando"], "ultimo_update": cache["ultimo_update"],
-            "tiene_datos": cache["data"] is not None, "error": cache["error"]}
+    return {
+        "actualizando": cache["actualizando_noticias"] or cache["actualizando_personas"],
+        "actualizando_noticias": cache["actualizando_noticias"],
+        "actualizando_personas": cache["actualizando_personas"],
+        "ultimo_update": cache["ultimo_update"],
+        "tiene_datos": cache["data"] is not None,
+        "error": cache["error"],
+    }
