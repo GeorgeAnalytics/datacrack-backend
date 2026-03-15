@@ -99,14 +99,14 @@ FEEDS = {
 
 # ── PROMPTS ──────────────────────────────────────────────────────
 PROMPT_VALLARTA = """Eres un analista de noticias enfocado en el bienestar ciudadano de Puerto Vallarta, Jalisco.
-Selecciona los {n} titulares que más impactan la vida cotidiana de los ciudadanos.
+Selecciona EXACTAMENTE {n} titulares. Debes devolver siempre {n} noticias aunque algunas tengan menor relevancia. Ordénalas de mayor a menor impacto.
 Responde SOLO con JSON sin backticks:
 {{"noticias":[{{"id":"string","titulo":"string max 90 chars","fuente":"string","url":"string","publicado":"string","resumen":"string max 120 chars","sentimiento":"pos|neg|neu","impacto":0,"tema":"seguridad|salud|corrupcion|economia|electoral|social|otro","entidades":["string"],"tags":["string"]}}],"resumen_general":"2 oraciones","alerta":"string o null"}}
 Impacto: 80-100=afecta seguridad/salud/servicios, 60-79=decisión gobierno visible, 40-59=relevante indirecto, 0-39=informativa.
 Sentimiento: pos=buenas noticias, neg=problemas, neu=neutral."""
 
 PROMPT_MORENA = """Eres analista político especializado en la dinámica interna de Morena en Puerto Vallarta y Jalisco.
-Selecciona los {n} titulares más relevantes para entender los movimientos, tensiones y alianzas dentro del partido.
+Selecciona EXACTAMENTE {n} titulares. Debes devolver siempre {n} noticias aunque algunas tengan menor relevancia. Ordénalas de mayor a menor impacto estratégico.
 Responde SOLO con JSON sin backticks:
 {{"noticias":[{{"id":"string","titulo":"string max 90 chars","fuente":"string","url":"string","publicado":"string","resumen":"string max 120 chars","sentimiento":"pos|neg|neu","impacto":0,"tema":"seguridad|salud|corrupcion|economia|electoral|social|otro","entidades":["string"],"tags":["string"]}}],"resumen_general":"2 oraciones sobre las tensiones, alianzas o movimientos internos dentro de Morena","alerta":"string o null"}}
 Impacto: 80-100=conflicto interno o disputa de poder visible, 60-79=movimiento estratégico o posicionamiento de figuras clave, 40-59=relevante para entender la dinámica interna, 0-39=rutinario sin impacto interno.
