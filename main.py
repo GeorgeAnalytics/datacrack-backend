@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # ── CONFIG ─────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 DATABASE_URL      = os.environ.get("DATABASE_URL", "")
-MAX_ARTICLES      = 8
+MAX_ARTICLES      = 6
 MAX_RETRIES       = 3
 RETRY_WAIT        = 5
 FRONTEND_URL      = os.environ.get("FRONTEND_URL", "*")
@@ -263,7 +263,7 @@ def run_scrape_noticias():
             prompt = PROMPT_VALLARTA if topic == "vallarta" else PROMPT_MORENA
             slim   = [{"id": a["id"], "t": a["titulo"], "f": a["fuente"], "u": a["url"], "p": a["publicado"]} for a in articles]
             try:
-                result = claude_call(prompt.format(n=MAX_ARTICLES), json.dumps(slim, ensure_ascii=False), max_tokens=6000)
+                result = claude_call(prompt.format(n=MAX_ARTICLES), json.dumps(slim, ensure_ascii=False), max_tokens=3000)
                 result["actualizado"] = datetime.now(timezone.utc).isoformat()
                 if result.get("alerta"):
                     guardar_alerta_db(result["alerta"], topic)
