@@ -105,12 +105,12 @@ Responde SOLO con JSON sin backticks:
 Impacto: 80-100=afecta seguridad/salud/servicios, 60-79=decisión gobierno visible, 40-59=relevante indirecto, 0-39=informativa.
 Sentimiento: pos=buenas noticias, neg=problemas, neu=neutral."""
 
-PROMPT_MORENA = """Eres analista político que monitorea Morena para el PVEM en Puerto Vallarta.
-Selecciona los {n} titulares más relevantes estratégicamente.
+PROMPT_MORENA = """Eres analista político especializado en la dinámica interna de Morena en Puerto Vallarta y Jalisco.
+Selecciona los {n} titulares más relevantes para entender los movimientos, tensiones y alianzas dentro del partido.
 Responde SOLO con JSON sin backticks:
-{{"noticias":[{{"id":"string","titulo":"string max 90 chars","fuente":"string","url":"string","publicado":"string","resumen":"string max 120 chars","sentimiento":"pos|neg|neu","impacto":0,"tema":"seguridad|salud|corrupcion|economia|electoral|social|otro","entidades":["string"],"tags":["string"]}}],"resumen_general":"2 oraciones sobre Morena y qué significa para PVEM","alerta":"string o null"}}
-Impacto para PVEM: 80-100=escándalo capitalizable, 60-79=riesgo u oportunidad, 40-59=relevante sin impacto inmediato, 0-39=rutinario.
-Sentimiento: pos=Morena se debilita, neg=Morena se fortalece, neu=sin efecto."""
+{{"noticias":[{{"id":"string","titulo":"string max 90 chars","fuente":"string","url":"string","publicado":"string","resumen":"string max 120 chars","sentimiento":"pos|neg|neu","impacto":0,"tema":"seguridad|salud|corrupcion|economia|electoral|social|otro","entidades":["string"],"tags":["string"]}}],"resumen_general":"2 oraciones sobre las tensiones, alianzas o movimientos internos dentro de Morena","alerta":"string o null"}}
+Impacto: 80-100=conflicto interno o disputa de poder visible, 60-79=movimiento estratégico o posicionamiento de figuras clave, 40-59=relevante para entender la dinámica interna, 0-39=rutinario sin impacto interno.
+Sentimiento: pos=figura interna se fortalece o consolida, neg=conflicto, escándalo o debilitamiento interno, neu=sin efecto en la dinámica interna."""
 
 PROMPT_PERSONA = """Eres un analista político neutral que monitorea la presencia mediática de políticos mexicanos.
 Recibirás titulares de noticias sobre {nombre} ({partido}). Analiza su actividad reciente.
