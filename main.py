@@ -34,7 +34,8 @@ cache = {
 
 # ── POSTGRESQL ─────────────────────────────────────────────────
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    url = DATABASE_URL.replace("postgresql://", "postgres://", 1)
+    return psycopg2.connect(url)
 
 def init_db():
     try:
