@@ -122,22 +122,27 @@ Tono: pos=cobertura favorable, neg=cobertura negativa, neu=informativa neutral."
 # ── MINIATURA (og:image) ─────────────────────────────────────────
 async def fetch_thumbnail(url: str) -> str:
     try:
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
-            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            # Primer request para seguir el redirect de Google News
+            r = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            })
+            # Usar la URL final después del redirect
+            final_url = str(r.url)
+            if "google.com" in final_url:
+                return ""
             html = r.text
-            # Buscar og:image
             for tag in ['og:image', 'twitter:image']:
-                idx = html.find(f'property="{tag}"')
-                if idx == -1:
-                    idx = html.find(f"property='{tag}'")
-                if idx == -1:
-                    idx = html.find(f'name="{tag}"')
-                if idx != -1:
-                    content_idx = html.find('content="', idx)
-                    if content_idx != -1:
-                        start = content_idx + 9
-                        end = html.find('"', start)
-                        return html[start:end]
+                for attr in [f'property="{tag}"', f"property='{tag}'", f'name="{tag}"']:
+                    idx = html.find(attr)
+                    if idx != -1:
+                        content_idx = html.find('content="', idx)
+                        if content_idx != -1:
+                            start = content_idx + 9
+                            end = html.find('"', start)
+                            img = html[start:end]
+                            if img.startswith('http'):
+                                return img
     except Exception:
         pass
     return ""
